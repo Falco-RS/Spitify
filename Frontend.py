@@ -8,6 +8,8 @@ from datetime import datetime
 
 # Motor Interno
 from services.engine_adapter import EngineAdapter
+from services.api_client import ApiClient
+import threading
 
 
 # =========================
@@ -66,6 +68,11 @@ class SpitifyApp:
 
         # Instanciar motor
         self.engine = EngineAdapter(video_hwnd_getter=self._get_video_hwnd)
+        
+        self.api = ApiClient()
+        self.auth_token = None
+        self.me_cache = None
+
 
         # Layout base: topbar + notebook
         self._build_topbar()
@@ -165,19 +172,35 @@ class SpitifyApp:
     def _build_tab_inicio(self):
         wrap = ttk.Frame(self.tab_inicio); wrap.pack(fill="both", expand=True, padx=PAD, pady=PAD)
 
-        card = ttk.Frame(wrap, style="Card.TFrame")
-        card.pack(fill="x", padx=PAD, pady=PAD)
+        card = ttk.Frame(wrap, style="Card.TFrame"); card.pack(fill="x", padx=PAD, pady=PAD)
         inner = ttk.Frame(card, style="TFrame"); inner.pack(fill="x", padx=PAD, pady=PAD)
 
         ttk.Label(inner, text="Inicio de Sesión", font=FONT_H2).pack(anchor="w")
-        ttk.Label(inner, text="(Stub local: luego integrará /auth/login de la API)", style="Muted.TLabel").pack(anchor="w", pady=(2, 12))
+        ttk.Label(inner, text="Conecta con la API (/auth/login)", style="Muted.TLabel")\
+            .pack(anchor="w", pady=(2,12))
 
-        row = ttk.Frame(inner); row.pack(fill="x", pady=(0,8))
-        ttk.Label(row, text="Usuario:", width=12).pack(side="left")
-        self.user_entry = ttk.Entry(row, width=30)
-        self.user_entry.insert(0, "Invitado")
-        self.user_entry.pack(side="left")
-        ttk.Button(inner, text="Iniciar sesión", style="Accent.TButton", command=self.fake_login).pack(anchor="w")
+        # Email
+        row1 = ttk.Frame(inner); row1.pack(fill="x", pady=(0,6))
+        ttk.Label(row1, text="Email:", width=12).pack(side="left")
+        self.email_entry = ttk.Entry(row1, width=32)
+        self.email_entry.pack(side="left", fill="x", expand=True)
+
+        # Password
+        row2 = ttk.Frame(inner); row2.pack(fill="x", pady=(0,10))
+        ttk.Label(row2, text="Contraseña:", width=12).pack(side="left")
+        self.pass_entry = ttk.Entry(row2, width=32, show="•")
+        self.pass_entry.pack(side="left", fill="x", expand=True)
+
+        # Botones
+        btns = ttk.Frame(inner); btns.pack(fill="x")
+        ttk.Button(btns, text="Iniciar sesión", style="Accent.TButton",
+                command=self.on_login).pack(side="left")
+        ttk.Button(btns, text="Cerrar sesión",
+                command=self.on_logout).pack(side="left", padx=8)
+
+        # Info
+        self.login_info = ttk.Label(inner, text="No autenticado.", style="Muted.TLabel")
+        self.login_info.pack(anchor="w", pady=(8,0))
 
     def fake_login(self):
         u = self.user_entry.get().strip() or "Invitado"
@@ -185,6 +208,44 @@ class SpitifyApp:
         self.status.set(f"Sesión iniciada como: {u}")
         messagebox.showinfo("Spitify", f"Sesión iniciada como: {u}")
         # TODO API: POST /auth/login -> guardar token y refresh dashboard
+
+    def on_login(self):
+        email = (self.email_entry.get() or "").strip()
+        pwd = (self.pass_entry.get() or "")
+        if not email or not pwd:
+            messagebox.showwarning("Login", "Ingresa email y contraseña.")
+            return
+
+        self.status.set("Autenticando…")
+
+        def worker():
+            try:
+                data = self.api.login(email, pwd)  # POST /auth/login
+                me = self.api.get_me()             # GET /me
+                # Cambios de UI deben ir en el hilo principal:
+                def ui_ok():
+                    self.auth_token = self.api.token
+                    self.me_cache = me
+                    self.username.set(me["user"]["email"])
+                    self.login_info.config(text=f"Autenticado ✓  Roles: {', '.join(me['user']['roles']) or '—'}")
+                    self.status.set("Login correcto")
+                    messagebox.showinfo("Login", "Sesión iniciada.")
+                self.root.after(0, ui_ok)
+            except Exception as e:
+                def ui_err():
+                    self.status.set("Error de login")
+                    messagebox.showerror("Login", str(e))
+                self.root.after(0, ui_err)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_logout(self):
+        self.api.logout()
+        self.auth_token = None
+        self.me_cache = None
+        self.username.set("Invitado")
+        self.login_info.config(text="No autenticado.")
+        self.status.set("Sesión cerrada")
 
     # ---------- Pestaña: Player ----------
     def _build_tab_player(self):
@@ -379,6 +440,10 @@ class SpitifyApp:
 
     # ---------- Acciones Player ----------
     def on_play(self):
+        if not self.auth_token:
+            messagebox.showwarning("Autenticación requerida", "Inicia sesión para reproducir contenido.")
+            return
+
         p = (self.entry_file.get() or "").strip()
         if not p:
             messagebox.showwarning("Spitify", "Selecciona un archivo válido.")
@@ -417,8 +482,13 @@ class SpitifyApp:
     # ---------- Acción Conversión ----------
     def on_convert(self):
         src = (self.conv_file.get() or "").strip()
+
         if not src or not Path(src).exists():
             messagebox.showwarning("Conversión", "Selecciona un archivo válido.")
+            return
+        
+        if not self.auth_token:
+            messagebox.showwarning("Autenticación requerida", "Inicia sesión para convertir.")
             return
 
         fmt = self.combo_fmt.get().strip().lower()
