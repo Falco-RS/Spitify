@@ -73,3 +73,8 @@ def require_roles(required: list[str]):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permisos insuficientes")
         return user
     return checker
+
+# === Shortcut: current user ===
+def get_current_user(ctx=Depends(require_user)) -> User:
+    user, _sess, _payload = ctx
+    return user

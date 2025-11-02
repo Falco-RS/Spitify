@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     coord_url: str = "http://127.0.0.1:8000" 
     heartbeat_sec: int = 3 
     ffmpeg_path: str = ""
+    public_base_url: str = "http://127.0.0.1:8000"
 
     class Config:
         env_file = ".env"
