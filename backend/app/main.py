@@ -12,6 +12,7 @@ from .routers import maintenance as maintenance_router
 from .routers import monitor_jobs as monitor_jobs_router
 from .routers import monitor_sessions as monitor_sessions_router
 from .routers import media_signed as media_signed_router
+from .routers import users as users_router
 from fastapi.middleware.cors import CORSMiddleware
 
 def create_app() -> FastAPI:
@@ -47,6 +48,7 @@ def create_app() -> FastAPI:
     app.include_router(monitor_jobs_router.router)       
     app.include_router(monitor_sessions_router.router)   
     app.include_router(media_signed_router.router)
+    app.include_router(users_router.router)
 
     return app
 
