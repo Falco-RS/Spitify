@@ -58,6 +58,7 @@ class SpitifyApp:
             "logo_32": 32,
             "open": 24, "play": 24, "pause": 24, "stop": 24,
             "convert": 24, "folder": 24, "dashboard": 24, "user": 24,
+            "upload": 24,
         }
         self.icons = {}
         for name, size in sizes.items():
@@ -139,14 +140,23 @@ class SpitifyApp:
             ttk.Label(left, image=self.icons["logo_32"]).pack(side="left", padx=(0,8))
         ttk.Label(left, text="Spitify", font=FONT_TITLE).pack(side="left")
 
+        # ---- Menú de usuario (username + flecha) ----
         right = ttk.Frame(top); right.pack(side="right", padx=PAD, pady=(PAD, 0))
-        if self.icons["user"]:
+
+        # Etiqueta de usuario
+        if self.icons.get("user"):
             ttk.Label(right, image=self.icons["user"]).pack(side="left", padx=(0,6))
         ttk.Label(right, textvariable=self.username, style="Muted.TLabel").pack(side="left")
 
+        # Botón flecha que despliega menú
+        self.user_menu_btn = tk.Menubutton(right, text="▾", relief="flat", bg=COL_BG, fg=COL_TEXT, activebackground=COL_PANEL)
+        self.user_menu_btn.pack(side="left", padx=(6,0))
+        self._user_menu = tk.Menu(self.user_menu_btn, tearoff=0, bg=COL_PANEL, fg=COL_TEXT, activebackground=COL_PANEL2, activeforeground=COL_TEXT)
+        self._user_menu.add_command(label="Cerrar sesión", command=self.on_logout)
+        self.user_menu_btn["menu"] = self._user_menu
+
         sep = ttk.Separator(self.root, orient="horizontal")
         sep.pack(fill="x", pady=(6,0))
-
     # ---------- Notebook ----------
     def _build_notebook(self):
         self.nb = ttk.Notebook(self.root)
@@ -194,20 +204,17 @@ class SpitifyApp:
         # Botones
         btns = ttk.Frame(inner); btns.pack(fill="x")
         ttk.Button(btns, text="Iniciar sesión", style="Accent.TButton",
-                command=self.on_login).pack(side="left")
-        ttk.Button(btns, text="Cerrar sesión",
-                command=self.on_logout).pack(side="left", padx=8)
+                   command=self.on_login).pack(side="left")
+
+        # Link-like para registro
+        reg_btn = tk.Label(btns, text="Crear cuenta", fg=COL_ACCENT, bg=COL_BG, cursor="hand2")
+        reg_btn.pack(side="left", padx=12)
+        reg_btn.bind("<Button-1>", lambda e: self._open_register_dialog())
 
         # Info
         self.login_info = ttk.Label(inner, text="No autenticado.", style="Muted.TLabel")
         self.login_info.pack(anchor="w", pady=(8,0))
 
-    def fake_login(self):
-        u = self.user_entry.get().strip() or "Invitado"
-        self.username.set(u)
-        self.status.set(f"Sesión iniciada como: {u}")
-        messagebox.showinfo("Spitify", f"Sesión iniciada como: {u}")
-        # TODO API: POST /auth/login -> guardar token y refresh dashboard
 
     def on_login(self):
         email = (self.email_entry.get() or "").strip()
@@ -220,9 +227,8 @@ class SpitifyApp:
 
         def worker():
             try:
-                data = self.api.login(email, pwd)  # POST /auth/login
-                me = self.api.get_me()             # GET /me
-                # Cambios de UI deben ir en el hilo principal:
+                data = self.api.login(email, pwd)
+                me = self.api.get_me()
                 def ui_ok():
                     self.auth_token = self.api.token
                     self.me_cache = me
@@ -232,10 +238,7 @@ class SpitifyApp:
                     messagebox.showinfo("Login", "Sesión iniciada.")
                 self.root.after(0, ui_ok)
             except Exception as e:
-                def ui_err():
-                    self.status.set("Error de login")
-                    messagebox.showerror("Login", str(e))
-                self.root.after(0, ui_err)
+                self.root.after(0, lambda: (self.status.set("Error de login"), messagebox.showerror("Login", str(e))))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -246,6 +249,230 @@ class SpitifyApp:
         self.username.set("Invitado")
         self.login_info.config(text="No autenticado.")
         self.status.set("Sesión cerrada")
+
+    def _open_register_dialog(self):
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Crear cuenta")
+        dlg.configure(bg=COL_BG)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        frm = ttk.Frame(dlg); frm.pack(fill="both", expand=True, padx=16, pady=16)
+
+        ttk.Label(frm, text="Registro", font=FONT_H2).grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(frm, text="Completa los campos para crear tu cuenta.", style="Muted.TLabel")\
+            .grid(row=1, column=0, columnspan=2, sticky="w", pady=(0,10))
+
+        ttk.Label(frm, text="Usuario:").grid(row=2, column=0, sticky="e", padx=(0,8), pady=4)
+        username_e = ttk.Entry(frm, width=30); username_e.grid(row=2, column=1, sticky="w")
+
+        ttk.Label(frm, text="Email:").grid(row=3, column=0, sticky="e", padx=(0,8), pady=4)
+        email_e = ttk.Entry(frm, width=30); email_e.grid(row=3, column=1, sticky="w")
+
+        ttk.Label(frm, text="Contraseña:").grid(row=4, column=0, sticky="e", padx=(0,8), pady=4)
+        pass_e = ttk.Entry(frm, width=30, show="•"); pass_e.grid(row=4, column=1, sticky="w")
+
+        ttk.Label(frm, text="Rol:").grid(row=5, column=0, sticky="e", padx=(0,8), pady=4)
+        role_cb = ttk.Combobox(frm, values=["user","admin"], state="readonly", width=12)
+        role_cb.set("user"); role_cb.grid(row=5, column=1, sticky="w")
+
+        btn_row = ttk.Frame(frm); btn_row.grid(row=6, column=0, columnspan=2, sticky="w", pady=(12,0))
+        ttk.Button(btn_row, text="Registrar", style="Accent.TButton",
+                   command=lambda: self._do_register(dlg, username_e.get().strip(), email_e.get().strip(), pass_e.get(), role_cb.get())
+                   ).pack(side="left")
+        ttk.Button(btn_row, text="Cancelar", command=dlg.destroy).pack(side="left", padx=8)
+
+        # centrado simple
+        dlg.update_idletasks()
+        w, h = dlg.winfo_width(), dlg.winfo_height()
+        x = self.root.winfo_x() + (self.root.winfo_width() - w)//2
+        y = self.root.winfo_y() + (self.root.winfo_height() - h)//2
+        dlg.geometry(f"+{x}+{y}")
+
+    def _do_register(self, dlg, username: str, email: str, password: str, role: str):
+        if not username or not email or not password:
+            messagebox.showwarning("Registro", "Completa usuario, email y contraseña.")
+            return
+
+        self.status.set("Registrando…")
+
+        def worker():
+            try:
+                created = self.api.register(username=username, email=email, password=password, role=role)
+                # Opcional: auto-login tras registrar
+                self.api.login(email, password)
+                me = self.api.get_me()
+                def ui_ok():
+                    self.auth_token = self.api.token
+                    self.me_cache = me
+                    self.username.set(me["user"]["email"])
+                    self.login_info.config(text=f"Autenticado ✓  Roles: {', '.join(me['user']['roles']) or '—'}")
+                    self.status.set(f"Usuario creado: {created.get('username','')}")
+                    messagebox.showinfo("Registro", f"Usuario {created.get('username')} creado.")
+                    dlg.destroy()
+                self.root.after(0, ui_ok)
+            except Exception as e:
+                def ui_err():
+                    self.status.set("Error en registro")
+                    messagebox.showerror("Registro", str(e))
+                self.root.after(0, ui_err)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_upload_current(self):
+        # Requiere login
+        if not self.auth_token:
+            messagebox.showwarning("Autenticación requerida", "Inicia sesión para subir contenido.")
+            return
+
+        # Toma el archivo del campo de la pestaña Player
+        path = (self.entry_file.get() or "").strip()
+        if not path:
+            messagebox.showwarning("Upload", "Selecciona un archivo primero.")
+            return
+        if not Path(path).exists():
+            messagebox.showwarning("Upload", "El archivo no existe.")
+            return
+
+        # Deshabilita mientras sube
+        self.status.set("Subiendo archivo…")
+
+        def worker():
+            try:
+                media = self.api.upload_media(path)  # POST /media/upload
+                def ui_ok():
+                    # media típicamente trae: id, rel_path, size, mime, sha256
+                    name = Path(path).name
+                    mid  = media.get("id", "?")
+                    self.status.set(f"Subido ✓ ({name}) [id={mid}]")
+                    # Si tienes el log de conversión, reutilízalo:
+                    if hasattr(self, "log_txt"):
+                        self._log(f"[UPLOAD] OK → id={mid}  path={media.get('rel_path','?')}  mime={media.get('mime','?')}")
+                    messagebox.showinfo("Upload", f"Archivo subido.\nID: {mid}\nRuta: {media.get('rel_path','')}")
+                self.root.after(0, ui_ok)
+            except Exception as e:
+                self.root.after(0, lambda: (
+                    self.status.set("Error al subir"),
+                    messagebox.showerror("Upload", str(e))
+                ))
+
+        import threading
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_stream_download_play(self):
+        if not self.auth_token:
+            messagebox.showwarning("Autenticación requerida", "Inicia sesión para acceder al streaming.")
+            return
+
+        mid_txt = (self.media_id_entry.get() or "").strip()
+        if not mid_txt.isdigit():
+            messagebox.showwarning("Streaming", "Ingresa un Media ID numérico.")
+            return
+        media_id = int(mid_txt)
+
+        # archivo temporal donde descargar
+        tmp_dir = Path("./.cache_media")
+        tmp_path = tmp_dir / f"media_{media_id}.bin"
+
+        self.status.set(f"Descargando media {media_id}…")
+        self.pb_stream["value"] = 0
+        self.pb_stream["mode"] = "determinate"
+
+        def progress_cb(total, downloaded):
+            # Si sabemos el total, actualizamos %; si no, modo indeterminado
+            if total and total > 0:
+                pct = max(0, min(100, int(100 * downloaded / total)))
+                self.root.after(0, lambda: self.pb_stream.configure(value=pct))
+            else:
+                # si no hay total, lo cambiamos a indeterminate
+                self.root.after(0, lambda: (self.pb_stream.configure(mode="indeterminate"), self.pb_stream.start(12)))
+
+        def worker():
+            try:
+                # descarga completa por chunks con JWT
+                self.api.download_media(media_id, tmp_path, chunk_mb=4, progress_cb=progress_cb)
+
+                def ui_ok():
+                    # detener indeterminate si estaba corriendo
+                    try: self.pb_stream.stop()
+                    except: pass
+                    self.pb_stream["mode"] = "determinate"
+                    self.pb_stream["value"] = 100
+                    self.status.set(f"Descargado ✓  → {tmp_path.name}")
+                    # reproducir con VLC el archivo temporal
+                    try:
+                        self.engine.play(str(tmp_path))
+                        self.entry_file.delete(0, "end")
+                        self.entry_file.insert(0, str(tmp_path))
+                    except Exception as e:
+                        messagebox.showerror("Play", str(e))
+                self.root.after(0, ui_ok)
+
+            except Exception as e:
+                def ui_err():
+                    try: self.pb_stream.stop()
+                    except: pass
+                    self.pb_stream["mode"] = "determinate"
+                    self.pb_stream["value"] = 0
+                    self.status.set("Error en descarga")
+                    messagebox.showerror("Streaming", str(e))
+                self.root.after(0, ui_err)
+
+        import threading
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_create_share(self):
+        if not self.auth_token:
+            messagebox.showwarning("Autenticación requerida", "Inicia sesión para crear links de share.")
+            return
+
+        mid_txt = (self.share_id_entry.get() or "").strip()
+        if not mid_txt.isdigit():
+            messagebox.showwarning("Share", "Ingresa un Media ID numérico.")
+            return
+        media_id = int(mid_txt)
+
+        self.status.set(f"Creando link de share para media {media_id}…")
+
+        def worker():
+            try:
+                res = self.api.create_share(media_id)   # POST /media/{id}/share
+                token = res.get("token")
+                if not token:
+                    raise RuntimeError("La respuesta no incluye 'token'.")
+                share_url = self.api.build_share_stream_url(media_id, token)
+
+                def ui_ok():
+                    self.share_url_var.set(share_url)
+                    self.status.set("Link de share generado ✓")
+                    # si tienes un log:
+                    if hasattr(self, "_log"):
+                        exp = res.get("expires_at", "sin fecha")
+                        self._log(f"[SHARE] id={media_id}  token={token[:10]}…  exp={exp}")
+                    messagebox.showinfo("Share", f"Link listo:\n{share_url}")
+                self.root.after(0, ui_ok)
+
+            except Exception as e:
+                self.root.after(0, lambda: (
+                    self.status.set("Error al crear share"),
+                    messagebox.showerror("Share", str(e))
+                ))
+
+        import threading
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_copy_share_url(self):
+        url = (self.share_url_var.get() or "").strip()
+        if not url:
+            messagebox.showwarning("Share", "No hay URL para copiar.")
+            return
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(url)
+            self.status.set("Share URL copiada al portapapeles")
+        except Exception as e:
+            messagebox.showerror("Share", f"No se pudo copiar: {e}")
 
     # ---------- Pestaña: Player ----------
     def _build_tab_player(self):
@@ -263,6 +490,41 @@ class SpitifyApp:
         ttk.Button(row, text=" Abrir", image=self.icons["open"], compound="left",
                 command=self._select_file).pack(side="left", padx=(6,0))
         ttk.Button(row, text=" Validar", command=self.on_validate).pack(side="left", padx=6)
+
+        ttk.Button(row, text=" Subir", image=self.icons.get("upload"), compound="left",
+           command=self.on_upload_current).pack(side="left", padx=6)
+
+        # --- Bloque: Reproducir desde API por media_id ---
+        api_row = ttk.Frame(inner); api_row.pack(fill="x", pady=(10,0))
+        ttk.Label(api_row, text="Media ID:", width=12).pack(side="left")
+        self.media_id_entry = ttk.Entry(api_row, width=12)
+        self.media_id_entry.pack(side="left")
+        ttk.Button(api_row, text=" Descargar & Reproducir (API)", command=self.on_stream_download_play)\
+            .pack(side="left", padx=8)
+
+        # Barra pequeña de progreso (para este bloque)
+        self.pb_stream = ttk.Progressbar(inner, mode="determinate", length=280)
+        self.pb_stream.pack(anchor="w", pady=(6,0))
+        self.pb_stream["value"] = 0
+
+        # --- Bloque: Compartir (crear link público/expirable) ---
+        share_row = ttk.Frame(inner); share_row.pack(fill="x", pady=(10,0))
+        ttk.Label(share_row, text="Media ID:", width=12).pack(side="left")
+        self.share_id_entry = ttk.Entry(share_row, width=12)
+        self.share_id_entry.pack(side="left")
+
+        ttk.Button(share_row, text=" Crear link de share", command=self.on_create_share)\
+            .pack(side="left", padx=8)
+
+        # Resultado del share (URL)
+        self.share_url_var = tk.StringVar(value="")
+        share_url_row = ttk.Frame(inner); share_url_row.pack(fill="x", pady=(6,0))
+        ttk.Label(share_url_row, text="Share URL:", width=12).pack(side="left")
+        self.share_url_entry = ttk.Entry(share_url_row, textvariable=self.share_url_var)
+        self.share_url_entry.pack(side="left", fill="x", expand=True)
+
+        ttk.Button(share_url_row, text=" Copiar", command=self.on_copy_share_url)\
+            .pack(side="left", padx=6)
 
         # Etiqueta de info de compatibilidad
         self.media_info = ttk.Label(inner, text="Sin archivo seleccionado.", style="Muted.TLabel")
@@ -440,9 +702,9 @@ class SpitifyApp:
 
     # ---------- Acciones Player ----------
     def on_play(self):
-        if not self.auth_token:
-            messagebox.showwarning("Autenticación requerida", "Inicia sesión para reproducir contenido.")
-            return
+        #if not self.auth_token:
+        #    messagebox.showwarning("Autenticación requerida", "Inicia sesión para reproducir contenido.")
+        #    return
 
         p = (self.entry_file.get() or "").strip()
         if not p:
@@ -485,10 +747,6 @@ class SpitifyApp:
 
         if not src or not Path(src).exists():
             messagebox.showwarning("Conversión", "Selecciona un archivo válido.")
-            return
-        
-        if not self.auth_token:
-            messagebox.showwarning("Autenticación requerida", "Inicia sesión para convertir.")
             return
 
         fmt = self.combo_fmt.get().strip().lower()
