@@ -1,36 +1,20 @@
-# Frontend.py - Dark UI estilo Spotify (sin dependencias extra)
+# Frontend.py
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
-import os, platform
-import math
-from datetime import datetime 
-
-# Motor Interno
+from datetime import datetime
+import threading
+# Servicios
 from services.engine_adapter import EngineAdapter
 from services.api_client import ApiClient
-import threading
+# UI módulos
+from ui import (
+    setup_styles, load_icons,
+    build_topbar, build_statusbar,
+    build_login_tab, build_player_tab, build_convert_tab, build_dashboard_tab
+)
+from ui.theme import PAD, FONT_TITLE, COL_BG, FONT_H2
 
-
-# =========================
-# Paleta y constantes UI
-# =========================
-COL_BG        = "#121212"  # fondo base
-COL_PANEL     = "#181818"  # paneles / cards
-COL_PANEL2    = "#1E1E1E"
-COL_ACCENT    = "#1DB954"  # verde Spotify
-COL_TEXT      = "#E6E6E6"
-COL_TEXT_MUT  = "#B3B3B3"
-COL_BORDER    = "#2A2A2A"
-
-FONT_TITLE = ("Segoe UI", 14, "bold")
-FONT_H2    = ("Segoe UI", 12, "bold")
-FONT_BASE  = ("Segoe UI", 10)
-PAD = 10
-
-# =========================
-# App
-# =========================
 class SpitifyApp:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -38,183 +22,44 @@ class SpitifyApp:
         self.root.geometry("1080x720")
         self.root.minsize(980, 620)
 
-        # (opcional) ícono de la ventana
-        ico = Path("assets/app.ico")
-        if ico.exists():
-            try: self.root.iconbitmap(ico)
-            except: pass
-
-        # Estado
+        # Estados
         self.current_file = tk.StringVar()
         self.status = tk.StringVar(value="Listo")
         self.username = tk.StringVar(value="Invitado")
-
-        # Estado de conversión / cola
         self.jobs = []
         self.job_counter = 0
 
-        # ---- Cargar íconos escalados ----
+        # Estilos
+        setup_styles(self.root)
+
+        # Íconos
         sizes = {
             "logo_32": 32,
             "open": 24, "play": 24, "pause": 24, "stop": 24,
             "convert": 24, "folder": 24, "dashboard": 24, "user": 24,
             "upload": 24,
         }
-        self.icons = {}
-        for name, size in sizes.items():
-            self.icons[name] = self._load_icon(Path(f"assets/{name}.png"), size)
+        self.icons = load_icons(Path("assets"), sizes)
 
-        # Estilos ttk (dark)
-        self._setup_styles()
-
-        # Instanciar motor
+        # Motores/servicios
         self.engine = EngineAdapter(video_hwnd_getter=self._get_video_hwnd)
-        
         self.api = ApiClient()
         self.auth_token = None
         self.me_cache = None
 
+        # Topbar
+        build_topbar(self)
 
-        # Layout base: topbar + notebook
-        self._build_topbar()
-        self._build_notebook()
-
-        # Statusbar
-        self._build_statusbar()
-
-    def _load_icon(self, path: Path, max_px: int):
-        """Carga y reduce una imagen grande a <= max_px con subsample (sin Pillow)."""
-        if not path.exists():
-            return None
-        try:
-            img = tk.PhotoImage(file=path)
-            w, h = img.width(), img.height()
-            factor = math.ceil(max(w, h) / max_px)  # reducción entera
-            if factor > 1:
-                img = img.subsample(factor, factor)
-            return img
-        except Exception:
-            return None
-
-    # ---------- Estilos ----------
-    def _setup_styles(self):
-        style = ttk.Style()
-        # Usa 'clam' como base para permitir estilos custom
-        try:
-            if "clam" in style.theme_names():
-                style.theme_use("clam")
-        except: pass
-
-        # Colores base
-        self.root.configure(bg=COL_BG)
-        style.configure(".", background=COL_BG, foreground=COL_TEXT, font=FONT_BASE)
-        style.configure("TLabel", background=COL_BG, foreground=COL_TEXT)
-        style.configure("Muted.TLabel", foreground=COL_TEXT_MUT)
-        style.configure("TFrame", background=COL_BG)
-        style.configure("Card.TFrame", background=COL_PANEL, relief="flat", borderwidth=1)
-        style.map("TButton",
-                  background=[("active", COL_PANEL2)],
-                  relief=[("pressed", "sunken"), ("!pressed", "flat")])
-        style.configure("Accent.TButton", background=COL_ACCENT, foreground="#0A0A0A")
-        style.configure("TNotebook", background=COL_BG, borderwidth=0)
-        style.configure("TNotebook.Tab", background=COL_PANEL, foreground=COL_TEXT_MUT,
-                        padding=(12, 6))
-        style.map("TNotebook.Tab",
-                  background=[("selected", COL_BG)],
-                  foreground=[("selected", COL_TEXT)])
-
-        # Entries
-        style.configure("TEntry", fieldbackground=COL_PANEL2, foreground=COL_TEXT)
-        style.map("TEntry", fieldbackground=[("focus", COL_PANEL2)])
-
-        # Separa líneas
-        style.configure("Separator", background=COL_BORDER)
-
-    # ---------- Topbar ----------
-    def _build_topbar(self):
-        top = ttk.Frame(self.root, style="TFrame")
-        top.pack(fill="x")
-
-        left = ttk.Frame(top); left.pack(side="left", padx=PAD, pady=(PAD, 0))
-        if self.icons["logo_32"]:
-            ttk.Label(left, image=self.icons["logo_32"]).pack(side="left", padx=(0,8))
-        ttk.Label(left, text="Spitify", font=FONT_TITLE).pack(side="left")
-
-        # ---- Menú de usuario (username + flecha) ----
-        right = ttk.Frame(top); right.pack(side="right", padx=PAD, pady=(PAD, 0))
-
-        # Etiqueta de usuario
-        if self.icons.get("user"):
-            ttk.Label(right, image=self.icons["user"]).pack(side="left", padx=(0,6))
-        ttk.Label(right, textvariable=self.username, style="Muted.TLabel").pack(side="left")
-
-        # Botón flecha que despliega menú
-        self.user_menu_btn = tk.Menubutton(right, text="▾", relief="flat", bg=COL_BG, fg=COL_TEXT, activebackground=COL_PANEL)
-        self.user_menu_btn.pack(side="left", padx=(6,0))
-        self._user_menu = tk.Menu(self.user_menu_btn, tearoff=0, bg=COL_PANEL, fg=COL_TEXT, activebackground=COL_PANEL2, activeforeground=COL_TEXT)
-        self._user_menu.add_command(label="Cerrar sesión", command=self.on_logout)
-        self.user_menu_btn["menu"] = self._user_menu
-
-        sep = ttk.Separator(self.root, orient="horizontal")
-        sep.pack(fill="x", pady=(6,0))
-    # ---------- Notebook ----------
-    def _build_notebook(self):
+        # Notebook + tabs
         self.nb = ttk.Notebook(self.root)
         self.nb.pack(fill="both", expand=True, padx=PAD, pady=PAD)
+        build_login_tab(self, self.nb)
+        build_player_tab(self, self.nb)
+        build_convert_tab(self, self.nb)
+        build_dashboard_tab(self, self.nb) 
 
-        # Tabs
-        self.tab_inicio    = ttk.Frame(self.nb, style="TFrame")
-        self.tab_player    = ttk.Frame(self.nb, style="TFrame")
-        self.tab_convert   = ttk.Frame(self.nb, style="TFrame")
-        self.tab_dashboard = ttk.Frame(self.nb, style="TFrame")
-
-        self.nb.add(self.tab_inicio, text="Inicio / Sesión")
-        self.nb.add(self.tab_player, text="Biblioteca / Reproductor")
-        self.nb.add(self.tab_convert, text="Conversión")
-        self.nb.add(self.tab_dashboard, text="Dashboard")
-
-        self._build_tab_inicio()
-        self._build_tab_player()
-        self._build_tab_convert()
-        self._build_tab_dashboard()
-
-    # ---------- Pestaña: Inicio ----------
-    def _build_tab_inicio(self):
-        wrap = ttk.Frame(self.tab_inicio); wrap.pack(fill="both", expand=True, padx=PAD, pady=PAD)
-
-        card = ttk.Frame(wrap, style="Card.TFrame"); card.pack(fill="x", padx=PAD, pady=PAD)
-        inner = ttk.Frame(card, style="TFrame"); inner.pack(fill="x", padx=PAD, pady=PAD)
-
-        ttk.Label(inner, text="Inicio de Sesión", font=FONT_H2).pack(anchor="w")
-        ttk.Label(inner, text="Conecta con la API (/auth/login)", style="Muted.TLabel")\
-            .pack(anchor="w", pady=(2,12))
-
-        # Email
-        row1 = ttk.Frame(inner); row1.pack(fill="x", pady=(0,6))
-        ttk.Label(row1, text="Email:", width=12).pack(side="left")
-        self.email_entry = ttk.Entry(row1, width=32)
-        self.email_entry.pack(side="left", fill="x", expand=True)
-
-        # Password
-        row2 = ttk.Frame(inner); row2.pack(fill="x", pady=(0,10))
-        ttk.Label(row2, text="Contraseña:", width=12).pack(side="left")
-        self.pass_entry = ttk.Entry(row2, width=32, show="•")
-        self.pass_entry.pack(side="left", fill="x", expand=True)
-
-        # Botones
-        btns = ttk.Frame(inner); btns.pack(fill="x")
-        ttk.Button(btns, text="Iniciar sesión", style="Accent.TButton",
-                   command=self.on_login).pack(side="left")
-
-        # Link-like para registro
-        reg_btn = tk.Label(btns, text="Crear cuenta", fg=COL_ACCENT, bg=COL_BG, cursor="hand2")
-        reg_btn.pack(side="left", padx=12)
-        reg_btn.bind("<Button-1>", lambda e: self._open_register_dialog())
-
-        # Info
-        self.login_info = ttk.Label(inner, text="No autenticado.", style="Muted.TLabel")
-        self.login_info.pack(anchor="w", pady=(8,0))
-
+        # Statusbar
+        build_statusbar(self)
 
     def on_login(self):
         email = (self.email_entry.get() or "").strip()
@@ -437,29 +282,30 @@ class SpitifyApp:
 
         def worker():
             try:
-                res = self.api.create_share(media_id)   # POST /media/{id}/share
-                token = res.get("token")
+                res = self.api.create_share(media_id, scope="public", minutes_valid=30)
+                token = res.get("token") or res.get("share_token")  # <<— importante
                 if not token:
-                    raise RuntimeError("La respuesta no incluye 'token'.")
-                share_url = self.api.build_share_stream_url(media_id, token)
+                    raise RuntimeError("La respuesta no incluye 'share_token' ni 'token'.")
+
+                share_url = self.api.build_share_stream_url(media_id, token)  # <<— usa el patrón /media/{id}/share/{token}
 
                 def ui_ok():
                     self.share_url_var.set(share_url)
                     self.status.set("Link de share generado ✓")
-                    # si tienes un log:
                     if hasattr(self, "_log"):
                         exp = res.get("expires_at", "sin fecha")
-                        self._log(f"[SHARE] id={media_id}  token={token[:10]}…  exp={exp}")
+                        self._log(f"[SHARE] id={media_id} token={token[:10]}… exp={exp}")
                     messagebox.showinfo("Share", f"Link listo:\n{share_url}")
                 self.root.after(0, ui_ok)
 
             except Exception as e:
-                self.root.after(0, lambda: (
+                err = e  # <- captura inmediata
+                self.root.after(0, lambda err=err: (
                     self.status.set("Error al crear share"),
-                    messagebox.showerror("Share", str(e))
+                    messagebox.showerror("Share", str(err))
                 ))
 
-        import threading
+
         threading.Thread(target=worker, daemon=True).start()
 
     def on_copy_share_url(self):
@@ -474,79 +320,261 @@ class SpitifyApp:
         except Exception as e:
             messagebox.showerror("Share", f"No se pudo copiar: {e}")
 
-    # ---------- Pestaña: Player ----------
-    def _build_tab_player(self):
-        wrap = ttk.Frame(self.tab_player); wrap.pack(fill="both", expand=True)
+    def on_play_share(self):
+        token = (self.share_token_entry.get() or "").strip()
+        mid_txt = (self.share_id_entry.get() or "").strip()
+        if not token:
+            messagebox.showwarning("Share", "Ingresa un token de share.")
+            return
+        if not mid_txt.isdigit():
+            messagebox.showwarning("Share", "Ingresa un Media ID válido (numérico).")
+            return
+        media_id = int(mid_txt)
 
-        # Card archivo
-        card_file = ttk.Frame(wrap, style="Card.TFrame"); card_file.pack(fill="x", padx=PAD, pady=(PAD, 6))
-        inner = ttk.Frame(card_file); inner.pack(fill="x", padx=PAD, pady=PAD)
+        tmp_dir = Path("./.cache_media"); tmp_dir.mkdir(exist_ok=True)
+        tmp_path = tmp_dir / f"share_{media_id}_{token[:10]}.bin"
 
-        ttk.Label(inner, text="Biblioteca / Reproductor", font=FONT_H2).pack(anchor="w", pady=(0,4))
-        row = ttk.Frame(inner); row.pack(fill="x", pady=(6,0))
-        self.entry_file = ttk.Entry(row)
-        self.entry_file.pack(side="left", fill="x", expand=True)
+        self.status.set("Descargando por token…")
+        self.pb_stream["mode"] = "indeterminate"; self.pb_stream.start(12)
 
-        ttk.Button(row, text=" Abrir", image=self.icons["open"], compound="left",
-                command=self._select_file).pack(side="left", padx=(6,0))
-        ttk.Button(row, text=" Validar", command=self.on_validate).pack(side="left", padx=6)
+        def worker():
+            try:
+                import requests
+                url = self.api.build_share_stream_url(media_id, token)
+                with requests.get(url, stream=True, timeout=self.api.timeout) as r:
+                    r.raise_for_status()
+                    with open(tmp_path, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=1024 * 1024):
+                            if chunk: f.write(chunk)
 
-        ttk.Button(row, text=" Subir", image=self.icons.get("upload"), compound="left",
-           command=self.on_upload_current).pack(side="left", padx=6)
+                def ui_ok():
+                    try: self.pb_stream.stop()
+                    except: pass
+                    self.pb_stream["mode"] = "determinate"; self.pb_stream["value"] = 100
+                    self.status.set(f"Descargado (share) → {tmp_path.name}")
+                    try:
+                        self.engine.play(str(tmp_path))
+                        self.entry_file.delete(0, "end")
+                        self.entry_file.insert(0, str(tmp_path))
+                    except Exception as e:
+                        messagebox.showerror("Play", str(e))
+                self.root.after(0, ui_ok)
 
-        # --- Bloque: Reproducir desde API por media_id ---
-        api_row = ttk.Frame(inner); api_row.pack(fill="x", pady=(10,0))
-        ttk.Label(api_row, text="Media ID:", width=12).pack(side="left")
-        self.media_id_entry = ttk.Entry(api_row, width=12)
-        self.media_id_entry.pack(side="left")
-        ttk.Button(api_row, text=" Descargar & Reproducir (API)", command=self.on_stream_download_play)\
-            .pack(side="left", padx=8)
+            except Exception as e:
+                err = e
+                self.root.after(0, lambda err=err: (
+                    self.pb_stream.stop(),
+                    self.pb_stream.configure(mode="determinate", value=0),
+                    self.status.set("Error en descarga (share)"),
+                    messagebox.showerror("Share", str(err))
+                ))
 
-        # Barra pequeña de progreso (para este bloque)
-        self.pb_stream = ttk.Progressbar(inner, mode="determinate", length=280)
-        self.pb_stream.pack(anchor="w", pady=(6,0))
-        self.pb_stream["value"] = 0
 
-        # --- Bloque: Compartir (crear link público/expirable) ---
-        share_row = ttk.Frame(inner); share_row.pack(fill="x", pady=(10,0))
-        ttk.Label(share_row, text="Media ID:", width=12).pack(side="left")
-        self.share_id_entry = ttk.Entry(share_row, width=12)
-        self.share_id_entry.pack(side="left")
+        threading.Thread(target=worker, daemon=True).start()
 
-        ttk.Button(share_row, text=" Crear link de share", command=self.on_create_share)\
-            .pack(side="left", padx=8)
 
-        # Resultado del share (URL)
-        self.share_url_var = tk.StringVar(value="")
-        share_url_row = ttk.Frame(inner); share_url_row.pack(fill="x", pady=(6,0))
-        ttk.Label(share_url_row, text="Share URL:", width=12).pack(side="left")
-        self.share_url_entry = ttk.Entry(share_url_row, textvariable=self.share_url_var)
-        self.share_url_entry.pack(side="left", fill="x", expand=True)
+    def on_download_share(self):
+        token = (self.share_token_entry.get() or "").strip()
+        mid_txt = (self.share_id_entry.get() or "").strip()
+        if not token:
+            messagebox.showwarning("Share", "Ingresa un token de share.")
+            return
+        if not mid_txt.isdigit():
+            messagebox.showwarning("Share", "Ingresa un Media ID válido (numérico).")
+            return
+        media_id = int(mid_txt)
 
-        ttk.Button(share_url_row, text=" Copiar", command=self.on_copy_share_url)\
-            .pack(side="left", padx=6)
+        out_dir = filedialog.askdirectory(title="Selecciona carpeta destino")
+        if not out_dir: return
+        dst = Path(out_dir) / f"share_{media_id}_{token}.bin"
 
-        # Etiqueta de info de compatibilidad
-        self.media_info = ttk.Label(inner, text="Sin archivo seleccionado.", style="Muted.TLabel")
-        self.media_info.pack(anchor="w", pady=(6,0))
+        self.status.set("Descargando archivo (share)…")
+        self.pb_stream["mode"] = "indeterminate"; self.pb_stream.start(12)
 
-        # Card video
-        card_video = ttk.Frame(wrap, style="Card.TFrame")
-        card_video.pack(fill="both", expand=True, padx=PAD, pady=(6, PAD))
-        self.video_panel = ttk.Frame(card_video, style="TFrame", height=420)
-        self.video_panel.pack(fill="both", expand=True, padx=PAD, pady=PAD)
-        self.video_panel.pack_propagate(False)  # mantiene altura fija
-        ttk.Label(self.video_panel, text="Área de reproducción (VLC)", style="Muted.TLabel")\
-            .place(relx=0.5, rely=0.5, anchor="center")
+        def worker():
+            try:
+                import requests
+                url = self.api.build_share_stream_url(media_id, token)
+                with requests.get(url, stream=True, timeout=self.api.timeout) as r:
+                    r.raise_for_status()
+                    with open(dst, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=1024 * 1024):
+                            if chunk: f.write(chunk)
 
-        # Controles
-        controls = ttk.Frame(wrap); controls.pack(fill="x", padx=PAD, pady=(0, PAD))
-        ttk.Button(controls, text=" Play", image=self.icons["play"], compound="left",
-                command=self.on_play).pack(side="left")
-        ttk.Button(controls, text=" Pausa", image=self.icons["pause"], compound="left",
-                command=self.on_pause).pack(side="left", padx=6)
-        ttk.Button(controls, text=" Stop", image=self.icons["stop"], compound="left",
-                command=self.on_stop).pack(side="left")
+                self.root.after(0, lambda: (
+                    self.pb_stream.stop(),
+                    self.pb_stream.configure(mode="determinate", value=100),
+                    self.status.set(f"Descarga OK → {dst}"),
+                    messagebox.showinfo("Share", f"Archivo guardado en:\n{dst}")
+                ))
+
+            except Exception as e:
+                err = e
+                self.root.after(0, lambda err=err: (
+                    self.pb_stream.stop(),
+                    self.pb_stream.configure(mode="determinate", value=0),
+                    self.status.set("Error en descarga (share)"),
+                    messagebox.showerror("Share", str(err))
+                ))
+
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    # --- API Jobs helpers dentro de SpitifyApp ---
+    def on_create_convert_job(self):
+        if not self.auth_token:
+            messagebox.showwarning("Jobs", "Inicia sesión.")
+            return
+
+        mid_txt = (self.conv_media_id_entry.get() or "").strip()
+        if not mid_txt.isdigit():
+            messagebox.showwarning("Jobs", "Ingresa un Media ID numérico.")
+            return
+        media_id = int(mid_txt)
+
+        target_ext = "." + (self.combo_fmt.get() or "mp3").lstrip(".")
+        self.status.set(f"Creando job convert → media_id={media_id}, ext={target_ext}…")
+
+        def worker():
+            try:
+                job = self.api.create_job(
+                    job_type="convert",
+                    payload={"media_id": media_id, "target_ext": target_ext}
+                )
+                jid = job.get("id") or job.get("job_id")
+                if not jid:
+                    raise RuntimeError(f"Respuesta sin id: {job}")
+
+                def ui_ok():
+                    self.status.set(f"Job #{jid} creado (queued).")
+                    self.job_pb["mode"] = "determinate"
+                    self.job_pb["value"] = 0
+                    # empezar a hacer polling
+                    self._start_job_poll(jid, started_ts=datetime.now())
+                self.root.after(0, ui_ok)
+
+            except Exception as e:
+                self.root.after(0, lambda: (
+                    self.status.set("Error creando job"),
+                    messagebox.showerror("Jobs", str(e))
+                ))
+        threading.Thread(target=worker, daemon=True).start()
+
+
+    def _start_job_poll(self, job_id: int, started_ts=None):
+        # guarda contexto de polling para evitar múltiples bucles sobre el mismo job
+        self._job_poll_ctx = {
+            "job_id": job_id,
+            "started_ts": started_ts or datetime.now(),
+            "attempts": 0,
+            "interval_ms": 1000,   # 1s inicial
+            "max_ms": 300000       # 5 minutos de timeout duro
+        }
+        self._poll_job_once()
+
+
+    def _poll_job_once(self):
+        ctx = getattr(self, "_job_poll_ctx", None)
+        if not ctx:
+            return
+        jid = ctx["job_id"]
+        ctx["attempts"] += 1
+
+        def worker():
+            try:
+                js = self.api.get_job_status(jid)
+                # Log defensivo por si el esquema es distinto
+                # (útil mientras estabilizas el backend)
+                try:
+                    self._log(f"[JOB #{jid}] status raw: {js}")
+                except:
+                    pass
+
+                # Acepta 'state' o 'status'
+                state = (js.get("state") or js.get("status") or "").lower()
+
+                # Acepta distintas llaves de progreso
+                progress = None
+                for k in ("progress", "pct", "percentage", "percent"):
+                    if k in js:
+                        progress = js[k]
+                        break
+                if progress is None:
+                    # intenta leer de nested
+                    progress = (js.get("meta", {}) or {}).get("progress")
+
+                # Normaliza progreso 0..100
+                try:
+                    progress = float(progress)
+                    if progress > 1.0 and progress <= 100.0:
+                        pct = progress
+                    elif 0.0 <= progress <= 1.0:
+                        pct = progress * 100.0
+                    else:
+                        pct = 0.0
+                except:
+                    pct = 0.0
+
+                # UI update
+                def ui_tick():
+                    self.job_pb["value"] = max(0, min(100, int(pct)))
+                    self.status.set(f"Job #{jid}: {state or 'desconocido'} ({int(self.job_pb['value'])}%)")
+                self.root.after(0, ui_tick)
+
+                # ¿finalizó?
+                if state in ("done", "finished", "success", "ok"):
+                    # si hay output o dst, muéstralo
+                    output = js.get("output") or js.get("result") or {}
+                    dst = output.get("dst") or output.get("path") or js.get("dst")
+                    def ui_done():
+                        self.job_pb["value"] = 100
+                        self.status.set(f"Job #{jid} terminado ✓")
+                        if dst:
+                            messagebox.showinfo("Jobs", f"Conversión completada.\nSalida: {dst}")
+                        else:
+                            messagebox.showinfo("Jobs", f"Job #{jid} terminado.")
+                        # limpiar contexto
+                        self._job_poll_ctx = None
+                    self.root.after(0, ui_done)
+                    return
+
+                if state in ("failed", "error"):
+                    err = js.get("error") or (js.get("meta", {}) or {}).get("error") or "Error no especificado."
+                    def ui_fail():
+                        self.status.set(f"Job #{jid} falló")
+                        messagebox.showerror("Jobs", f"Job #{jid} falló:\n{err}")
+                        self._job_poll_ctx = None
+                    self.root.after(0, ui_fail)
+                    return
+
+                # si sigue pendiente/ejecutando, reprogramar
+                elapsed_ms = (datetime.now() - ctx["started_ts"]).total_seconds() * 1000.0
+                if elapsed_ms >= ctx["max_ms"]:
+                    def ui_to():
+                        self.status.set(f"Job #{jid} sin respuesta final (timeout).")
+                        messagebox.showwarning(
+                            "Jobs",
+                            "El job no cambió a 'done/failed' en el tiempo esperado.\n"
+                            "Verifica que el worker esté corriendo y reportando progreso."
+                        )
+                        self._job_poll_ctx = None
+                    self.root.after(0, ui_to)
+                    return
+
+                # backoff suave: máximo cada 2s
+                interval = min(2000, ctx["interval_ms"] + 100)
+                ctx["interval_ms"] = interval
+                self.root.after(interval, self._poll_job_once)
+
+            except Exception as e:
+                def ui_err():
+                    self.status.set(f"Error consultando job #{jid}")
+                    messagebox.showerror("Jobs", str(e))
+                    self._job_poll_ctx = None
+                self.root.after(0, ui_err)
+
+        threading.Thread(target=worker, daemon=True).start()
+
 
     def _select_file(self):
         f = filedialog.askopenfilename(
@@ -580,92 +608,7 @@ class SpitifyApp:
         self.media_info.config(text=f"Compatible ✓  Tipo: {mtype}", style="TLabel")
         self.status.set("Archivo compatible")
 
-    # ---------- Pestaña: Conversión ----------
-    def _build_tab_convert(self):
-        wrap = ttk.Frame(self.tab_convert); wrap.pack(fill="both", expand=True)
-
-        # --- Card de controles de conversión ---
-        card = ttk.Frame(wrap, style="Card.TFrame"); card.pack(fill="x", padx=PAD, pady=PAD)
-        inner = ttk.Frame(card); inner.pack(fill="x", padx=PAD, pady=PAD)
-
-        ttk.Label(inner, text="Conversión de archivos", font=FONT_H2).pack(anchor="w")
-        ttk.Label(inner, text="El motor soporta: mp3, flac, wav, ogg, mp4, webm, mkv", style="Muted.TLabel").pack(anchor="w", pady=(2,8))
-
-        row1 = ttk.Frame(inner); row1.pack(fill="x", pady=4)
-        ttk.Label(row1, text="Archivo:", width=12).pack(side="left")
-        self.conv_file = ttk.Entry(row1); self.conv_file.pack(side="left", fill="x", expand=True)
-        ttk.Button(row1, text=" Abrir", image=self.icons["open"], compound="left",
-                command=lambda: self._pick_for(self.conv_file)).pack(side="left", padx=(6,0))
-
-        row2 = ttk.Frame(inner); row2.pack(fill="x", pady=4)
-        ttk.Label(row2, text="Formato:", width=12).pack(side="left")
-        self.combo_fmt = ttk.Combobox(row2, state="readonly",
-                                    values=["mp3","flac","wav","ogg","mp4","webm","mkv"], width=10)
-        self.combo_fmt.set("mp3"); self.combo_fmt.pack(side="left")
-
-        row3 = ttk.Frame(inner); row3.pack(fill="x", pady=4)
-        ttk.Label(row3, text="Salida:", width=12).pack(side="left")
-        self.out_dir = ttk.Entry(row3); self.out_dir.insert(0, str(self.engine.DEFAULT_OUTDIR))
-        self.out_dir.pack(side="left", fill="x", expand=True)
-        ttk.Button(row3, text=" Carpeta", image=self.icons["folder"], compound="left",
-                command=self._pick_dir).pack(side="left", padx=(6,0))
-
-        # Barra de progreso (indeterminada)
-        self.pb = ttk.Progressbar(inner, mode="indeterminate", length=220)
-        self.pb.pack(anchor="w", pady=(8,0))
-
-        # Botón convertir
-        ttk.Button(inner, text=" Convertir", image=self.icons["convert"], compound="left",
-                style="Accent.TButton", command=self.on_convert).pack(anchor="w", pady=(10,0))
-
-        # Log de eventos (ligero)
-        log_card = ttk.Frame(wrap, style="Card.TFrame"); log_card.pack(fill="x", padx=PAD, pady=(6,0))
-        log_in = ttk.Frame(log_card); log_in.pack(fill="x", padx=PAD, pady=PAD)
-        ttk.Label(log_in, text="Log:", style="Muted.TLabel").pack(anchor="w")
-        self.log_txt = tk.Text(log_in, height=6, bg=COL_PANEL2, fg=COL_TEXT, relief="flat")
-        self.log_txt.pack(fill="x", expand=False, pady=(4,0))
-        self.log_txt.configure(state="disabled")
-
-        # --- Card de cola de trabajos ---
-        q_card = ttk.Frame(wrap, style="Card.TFrame"); q_card.pack(fill="both", expand=True, padx=PAD, pady=(6, PAD))
-        q_in = ttk.Frame(q_card); q_in.pack(fill="both", expand=True, padx=PAD, pady=PAD)
-
-        ttk.Label(q_in, text="Cola de trabajos", font=FONT_H2).pack(anchor="w", pady=(0,6))
-
-        cols = ("id","src","fmt","estado","inicio","fin","duracion")
-        self.tv = ttk.Treeview(q_in, columns=cols, show="headings", height=8)
-        for c, w in [("id",60),("src",280),("fmt",60),("estado",120),("inicio",140),("fin",140),("duracion",90)]:
-            self.tv.heading(c, text=c.upper()); self.tv.column(c, width=w, anchor="w")
-        self.tv.pack(fill="both", expand=True)
-
-        # Colorear por estado (opcional)
-        self.tv.tag_configure("PENDIENTE", foreground=COL_TEXT_MUT)
-        self.tv.tag_configure("PROCESANDO", foreground=COL_ACCENT)
-        self.tv.tag_configure("OK", foreground="#6EE7B7")      # verde claro
-        self.tv.tag_configure("ERROR", foreground="#F87171")   # rojo claro
-
-        # TODO: cola de trabajos con Treeview (estado, inicio, fin, duración)
-
-    def _log(self, msg: str):
-        self.log_txt.configure(state="normal")
-        self.log_txt.insert("end", f"{msg}\n")
-        self.log_txt.see("end")
-        self.log_txt.configure(state="disabled")
-
-    def _queue_add_job(self, src: Path, fmt: str) -> str:
-        self.job_counter += 1
-        jid = f"J{self.job_counter:04d}"
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.tv.insert("", "end", iid=jid, values=(jid, src.name, fmt, "PENDIENTE", now, "", ""), tags=("PENDIENTE",))
-        self._log(f"[{jid}] Pendiente → {src.name} → {fmt}")
-        return jid
-
-    def _queue_update_job(self, jid: str, estado: str, fin: str = "", duracion: str = ""):
-        vals = list(self.tv.item(jid, "values"))
-        vals[3] = estado
-        if fin: vals[5] = fin
-        if duracion: vals[6] = duracion
-        self.tv.item(jid, values=vals, tags=(estado,))
+    
 
     # ---------- Pestaña: Dashboard ----------
     def _build_tab_dashboard(self):
@@ -688,6 +631,7 @@ class SpitifyApp:
         try: return self.video_panel.winfo_id()
         except: return None
 
+        # ---------- Utilidades de archivo (las usa la pestaña Convert) ----------
     def _pick_for(self, entry: ttk.Entry):
         f = filedialog.askopenfilename(
             title="Selecciona archivo",
@@ -698,7 +642,80 @@ class SpitifyApp:
 
     def _pick_dir(self):
         d = filedialog.askdirectory(title="Selecciona carpeta de salida")
-        if d: self.out_dir.delete(0, "end"); self.out_dir.insert(0, d)
+        if d:
+            # out_dir lo crea build_convert_tab
+            self.out_dir.delete(0, "end"); self.out_dir.insert(0, d)
+
+    # ---------- Conversión (botón Convertir) ----------
+    def on_convert(self):
+        # campos creados por build_convert_tab
+        src = (self.conv_file.get() or "").strip()
+        if not src or not Path(src).exists():
+            messagebox.showwarning("Conversión", "Selecciona un archivo válido.")
+            return
+
+        fmt = self.combo_fmt.get().strip().lower()
+        outdir = Path((self.out_dir.get() or "").strip() or str(self.engine.DEFAULT_OUTDIR))
+        outdir.mkdir(parents=True, exist_ok=True)
+        dst = outdir / f"{Path(src).stem}.{fmt}"
+
+        jid = self._queue_add_job(Path(src), fmt)
+        start_ts = datetime.now()
+
+        def done_cb(res: dict):
+            def _ui():
+                self.pb.stop()
+                if res.get("ok"):
+                    end_ts = datetime.now()
+                    dur_s = res.get("seconds", (end_ts - start_ts).total_seconds())
+                    self._queue_update_job(jid, "OK", end_ts.strftime("%Y-%m-%d %H:%M:%S"), f"{dur_s:.1f}s")
+                    self.status.set(f"Convertido en {dur_s:.1f}s → {res['dst'].name}")
+                    self._log(f"[{jid}] OK → {res['dst']}")
+                    messagebox.showinfo("Conversión", f"Salida: {res['dst']}")
+                else:
+                    self._queue_update_job(jid, "ERROR")
+                    self.status.set("Conversión fallida")
+                    self._log(f"[{jid}] ERROR")
+                    messagebox.showerror("Conversión", "Falló la conversión.")
+            self.root.after(0, _ui)
+
+        def err_cb(exc: Exception):
+            self.root.after(0, lambda: (
+                self.pb.stop(),
+                self._queue_update_job(jid, "ERROR"),
+                self._log(f"[{jid}] ERROR: {exc}"),
+                messagebox.showerror("Conversión", str(exc))
+            ))
+
+        self._queue_update_job(jid, "PROCESANDO")
+        self.status.set("Convirtiendo…")
+        self.pb.start(12)
+        self.engine.convert_async(src, dst, on_done=done_cb, on_error=err_cb)
+
+    # ---------- Log + Cola de trabajos (los usan Convert/Player) ----------
+    def _log(self, msg: str):
+        # log_txt se crea en build_convert_tab
+        if hasattr(self, "log_txt"):
+            self.log_txt.configure(state="normal")
+            self.log_txt.insert("end", f"{msg}\n")
+            self.log_txt.see("end")
+            self.log_txt.configure(state="disabled")
+
+    def _queue_add_job(self, src: Path, fmt: str) -> str:
+        self.job_counter += 1
+        jid = f"J{self.job_counter:04d}"
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # tv se crea en build_convert_tab
+        self.tv.insert("", "end", iid=jid, values=(jid, src.name, fmt, "PENDIENTE", now, "", ""), tags=("PENDIENTE",))
+        self._log(f"[{jid}] Pendiente → {src.name} → {fmt}")
+        return jid
+
+    def _queue_update_job(self, jid: str, estado: str, fin: str = "", duracion: str = ""):
+        vals = list(self.tv.item(jid, "values"))
+        vals[3] = estado
+        if fin: vals[5] = fin
+        if duracion: vals[6] = duracion
+        self.tv.item(jid, values=vals, tags=(estado,))
 
     # ---------- Acciones Player ----------
     def on_play(self):
@@ -741,57 +758,9 @@ class SpitifyApp:
         except Exception as e:
             messagebox.showerror("Stop", str(e))
 
-    # ---------- Acción Conversión ----------
-    def on_convert(self):
-        src = (self.conv_file.get() or "").strip()
-
-        if not src or not Path(src).exists():
-            messagebox.showwarning("Conversión", "Selecciona un archivo válido.")
-            return
-
-        fmt = self.combo_fmt.get().strip().lower()
-        outdir = Path((self.out_dir.get() or "").strip() or str(self.engine.DEFAULT_OUTDIR))
-        outdir.mkdir(parents=True, exist_ok=True)
-        dst = outdir / f"{Path(src).stem}.{fmt}"
-
-        # Añadir a cola visual
-        jid = self._queue_add_job(Path(src), fmt)
-
-        # Callbacks seguros para Tk
-        start_ts = datetime.now()
-
-        def done_cb(res: dict):
-            def _ui():
-                self.pb.stop()
-                if res.get("ok"):
-                    end_ts = datetime.now()
-                    dur_s = res.get("seconds", (end_ts - start_ts).total_seconds())
-                    self._queue_update_job(jid, "OK", end_ts.strftime("%Y-%m-%d %H:%M:%S"), f"{dur_s:.1f}s")
-                    self.status.set(f"Convertido en {dur_s:.1f}s → {res['dst'].name}")
-                    self._log(f"[{jid}] OK → {res['dst']}")
-                    messagebox.showinfo("Conversión", f"Salida: {res['dst']}")
-                else:
-                    self._queue_update_job(jid, "ERROR")
-                    self.status.set("Conversión fallida")
-                    self._log(f"[{jid}] ERROR")
-                    messagebox.showerror("Conversión", "Falló la conversión.")
-            self.root.after(0, _ui)
-
-        def err_cb(exc: Exception):
-            self.root.after(0, lambda: (
-                self.pb.stop(),
-                self._queue_update_job(jid, "ERROR"),
-                self._log(f"[{jid}] ERROR: {exc}"),
-                messagebox.showerror("Conversión", str(exc))
-            ))
-
-        # Marcar en proceso + progreso
-        self._queue_update_job(jid, "PROCESANDO")
-        self.status.set("Convirtiendo…")
-        self.pb.start(12)  # velocidad del indeterminado
-
-        # Lanzar conversión en hilo
-        self.engine.convert_async(src, dst, on_done=done_cb, on_error=err_cb)
+    def _get_video_hwnd(self):
+        try: return self.video_panel.winfo_id()
+        except: return None
 
 # ---------- main ----------
 def main():

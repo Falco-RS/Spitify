@@ -215,14 +215,20 @@ class ApiClient:
         return dest_path
     
     # ----------  compartir ----------
-    def create_share(self, media_id: int) -> Dict[str, Any]:
+    # --- SHARE: crear token público/expirable ---
+    def create_share(self, media_id: int, scope: str = "public", minutes_valid: int = 30) -> Dict[str, Any]:
         """
-        POST /media/{id}/share  (dueño o admin)
-        Devuelve p.ej. {"token":"...", "expires_at":"..."}
+        POST /media/{id}/share
+        Body esperado por tu backend:
+        {"scope": "public", "minutes_valid": 30}
+        Devuelve (ej.):
+        {"id": 1, "media_id": 1, "share_token": "...", "scope": "public",
+        "expires_at": "2025-11-04T22:11:49.651803", "created_at": "..."}
         """
         self._ensure_token()
         url = f"{self.base_url}/media/{media_id}/share"
-        resp = requests.post(url, headers=self._auth_header(), timeout=self.timeout)
+        payload = {"scope": scope, "minutes_valid": minutes_valid}
+        resp = requests.post(url, headers=self._auth_header(), json=payload, timeout=self.timeout)
         if resp.status_code not in (200, 201):
             try:
                 detail = resp.json().get("detail", resp.text)
@@ -235,9 +241,202 @@ class ApiClient:
             raise RuntimeError(f"Share failed: {resp.status_code} {detail}")
         return resp.json()
 
+
+    # --- URL builder: streaming con token por query (?share=TOKEN) ---
     def build_share_stream_url(self, media_id: int, token: str) -> str:
         """
-        URL de streaming pública basada en share token.
-        Ajusta si tu backend usa otro patrón (p.ej. /s/{token}).
+        Construye una URL de streaming que pasa el token por query:
+        GET /media/{id}/stream?share=<TOKEN>
+        Útil si quieres usar el mismo endpoint de stream con verificación de share.
         """
-        return f"{self.base_url}/media/{media_id}/stream?share={token}"
+        return f"{self.base_url}/media/share/{token}"
+
+
+    # --- URL builder: acceso público por ruta (el de tu backend actual) ---
+    def build_public_share_url(self, token: str) -> str:
+        """
+        Construye la URL pública expuesta por tu backend:
+        GET /media/share/<TOKEN>
+        """
+        return f"{self.base_url}/media/share/{token}"
+
+
+    # --- Descargar por share público (sin JWT), con soporte de Range opcional ---
+    def download_share(self, token: str, dest_path: str | Path, range_bytes: str | None = None) -> Dict[str, Any]:
+        """
+        Descarga el recurso compartido:
+        GET /media/share/<TOKEN>
+        - dest_path: ruta de salida (str o Path)
+        - range_bytes: ej. 'bytes=0-1048575' para parcial (opcional)
+        Retorna: {'ok': True, 'path': Path, 'status': int, 'bytes': int}
+        """
+        url = self.build_public_share_url(token)
+        headers = {}
+        if range_bytes:
+            headers["Range"] = range_bytes
+
+        dest_path = Path(dest_path)
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with requests.get(url, headers=headers, stream=True, timeout=self.timeout) as r:
+            if r.status_code not in (200, 206):
+                try:
+                    detail = r.json()
+                except Exception:
+                    detail = r.text
+                raise RuntimeError(f"Share GET failed [{r.status_code}]: {detail}")
+
+            total = 0
+            with open(dest_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
+                        total += len(chunk)
+
+        return {"ok": True, "path": dest_path, "status": r.status_code, "bytes": total}
+
+    # services/api_client.py (añadir)
+    def create_job(self, job_type: str, payload: dict) -> dict:
+        self._ensure_token()
+        url = f"{self.base_url}/jobs"
+        body = {"type": job_type, "payload": payload}
+        r = requests.post(url, json=body, headers=self._auth_header(), timeout=self.timeout)
+        if r.status_code not in (200, 201):
+            raise RuntimeError(f"Create job failed [{r.status_code}]: {r.text}")
+        return r.json()
+
+    def get_job_status(self, job_id: int) -> dict:
+        self._ensure_token()
+        url = f"{self.base_url}/jobs/{job_id}"
+        r = requests.get(url, headers=self._auth_header(), timeout=self.timeout)
+        if r.status_code != 200:
+            raise RuntimeError(f"Get job failed [{r.status_code}]: {r.text}")
+        return r.json()
+
+     # ---------- Monitor/Dashboard ----------
+    def monitor_nodes(self) -> dict:
+        self._ensure_token()
+        url = f"{self.base_url}/monitor/nodes"
+        r = requests.get(url, headers=self._auth_header(), timeout=self.timeout)
+        if r.status_code != 200:
+            raise RuntimeError(f"/monitor/nodes failed: {r.status_code} {r.text}")
+        return r.json()
+
+    def monitor_jobs(self, limit: int | None = None) -> dict:
+        self._ensure_token()
+        url = f"{self.base_url}/monitor/jobs"
+        params = {"limit": limit} if limit else None
+        r = requests.get(url, headers=self._auth_header(), params=params, timeout=self.timeout)
+        if r.status_code != 200:
+            raise RuntimeError(f"/monitor/jobs failed: {r.status_code} {r.text}")
+        return r.json()
+
+    def monitor_sessions(self) -> dict:
+        self._ensure_token()
+        url = f"{self.base_url}/monitor/sessions"
+        r = requests.get(url, headers=self._auth_header(), timeout=self.timeout)
+        if r.status_code != 200:
+            raise RuntimeError(f"/monitor/sessions failed: {r.status_code} {r.text}")
+        return r.json()
+
+    def monitor_summary(self) -> dict:
+        self._ensure_token()
+        url = f"{self.base_url}/monitor/summary"
+        r = requests.get(url, headers=self._auth_header(), timeout=self.timeout)
+        if r.status_code != 200:
+            raise RuntimeError(f"/monitor/summary failed: {r.status_code} {r.text}")
+        return r.json()
+        # ---------- Helpers genéricos ----------
+    def _get_json(self, path: str, params: dict | None = None) -> tuple[int, dict | None, str]:
+        """GET con JWT. Devuelve (status, json|None, text). No lanza en 404."""
+        self._ensure_token()
+        url = f"{self.base_url}{path}"
+        r = requests.get(url, headers=self._auth_header(), params=params, timeout=self.timeout)
+        try:
+            data = r.json()
+        except Exception:
+            data = None
+        return r.status_code, data, r.text
+
+    # ---------- Monitor/Dashboard ----------
+    def monitor_nodes(self) -> dict | list:
+        status, data, txt = self._get_json("/monitor/nodes")
+        if status == 200:
+            return data
+        if status == 404:
+            # endpoint no disponible
+            return {"_unavailable": True}
+        raise RuntimeError(f"/monitor/nodes failed: {status} {txt}")
+
+    def monitor_jobs(self, limit: int | None = None) -> dict | list:
+        params = {"limit": limit} if limit else None
+        status, data, txt = self._get_json("/monitor/jobs", params=params)
+        if status == 200:
+            return data
+        if status == 404:
+            return {"_unavailable": True}
+        raise RuntimeError(f"/monitor/jobs failed: {status} {txt}")
+
+    def monitor_sessions(self) -> dict | list:
+        status, data, txt = self._get_json("/monitor/sessions")
+        if status == 200:
+            return data
+        if status == 404:
+            return {"_unavailable": True}
+        raise RuntimeError(f"/monitor/sessions failed: {status} {txt}")
+
+    def monitor_summary(self) -> dict:
+        status, data, txt = self._get_json("/monitor/summary")
+        if status == 200:
+            return data
+        if status == 404:
+            # No existe en tu API: devolvemos marca para que el UI calcule
+            return {"_unavailable": True}
+        raise RuntimeError(f"/monitor/summary failed: {status} {txt}")
+
+    def monitor_summary_best_effort(self) -> dict:
+        """
+        Intenta /monitor/summary; si no existe,
+        compone un resumen a partir de /monitor/nodes y /monitor/jobs.
+        """
+        sm = self.monitor_summary()
+        if not isinstance(sm, dict) or sm.get("_unavailable"):
+            # Fallback: construimos
+            nodes_payload = self.monitor_nodes()
+            jobs_payload  = self.monitor_jobs(limit=200)
+
+            # Nodos (acepta lista o {"items":[...]})
+            nodes_items = nodes_payload if isinstance(nodes_payload, list) else nodes_payload.get("items", [])
+            active = len(nodes_items)
+            scores = []
+            overloaded = 0
+            for n in nodes_items:
+                try:
+                    scores.append(float(n.get("score", 0.0)))
+                except Exception:
+                    pass
+                if bool(n.get("overloaded", False)):
+                    overloaded += 1
+            least_score = min(scores) if scores else None
+
+            # Jobs (lista o {"items":[...]})
+            jobs_items = jobs_payload if isinstance(jobs_payload, list) else jobs_payload.get("items", [])
+            counts = {"queued": 0, "running": 0, "done": 0, "failed": 0}
+            for j in jobs_items:
+                st = (j.get("status") or "").lower()
+                if st in counts:
+                    counts[st] += 1
+                else:
+                    counts.setdefault(st, 0)
+                    counts[st] += 1
+
+            return {
+                "jobs_by_status": counts,
+                "nodes": {
+                    "active": active,
+                    "least_score": least_score,
+                    "overloaded": overloaded
+                },
+                "_composed": True
+            }
+        return sm
