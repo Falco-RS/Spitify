@@ -20,3 +20,10 @@
 *.pyd
 .DS_Store
 Thumbs.db
+
+*.pyc
+*.pyo
+
+# Caché y medios pesados
+.cache_media/
+media/
