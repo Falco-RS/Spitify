@@ -1,40 +1,36 @@
 # app/routers/users.py
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
-from ..auth import get_db, hash_password, require_roles, get_current_user
+from ..auth import get_db, hash_password
 from ..models import User, Role
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# === Pydantic schema ===
 class UserCreate(BaseModel):
-    username: str
     email: EmailStr
     password: str
-    role: str | None = "user"  # opcional: 'admin' o 'user'
+    role: str | None = "user"
 
-# === Crear usuario (registro o admin) ===
 @router.post("/register")
 def register_user(data: UserCreate, db: Session = Depends(get_db)):
-    # Validar existencia
-    existing = db.query(User).filter(User.username == data.username).first()
+    # 1) ¿ya existe el email?
+    existing = db.query(User).filter(User.email == data.email).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Usuario ya existe")
+        raise HTTPException(status_code=400, detail="El email ya está registrado")
 
-    # Crear usuario
+    # 2) crear usuario
     user = User(
-        username=data.username,
         email=data.email,
         password_hash=hash_password(data.password),
-        is_active=True
+        is_active=True,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
 
-    # Asignar rol
-    role_name = data.role or "user"
+    # 3) obtener/crear rol
+    role_name = (data.role or "user").strip().lower()
     role = db.query(Role).filter(Role.name == role_name).first()
     if not role:
         role = Role(name=role_name)
@@ -42,11 +38,11 @@ def register_user(data: UserCreate, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(role)
 
-    # Relación user_roles (si tienes tabla intermedia)
-    db.execute(
-        "INSERT INTO user_roles (user_id, role_id) VALUES (:u, :r)",
-        {"u": user.id, "r": role.id}
-    )
+    # 4) asociar rol vía ORM (esto inserta en user_roles automáticamente)
+    user.roles.append(role)
+    db.add(user)
     db.commit()
+    db.refresh(user)
 
-    return {"id": user.id, "username": user.username, "role": role_name}
+    # 5) respuesta
+    return {"id": user.id, "email": user.email, "role": role_name}

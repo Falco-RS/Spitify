@@ -14,3 +14,4 @@ python-multipart
 psutil
 requests
 python-vlc
+pydantic-settings

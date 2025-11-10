@@ -1,1 +1,22 @@
-/.venv
+# --- Carpetas y archivos a ignorar en la raíz ---
+/__pycache__/
+/.venv/
+/.env
+
+# --- Carpeta services ---
+/services/__pycache__/
+
+# --- Carpeta backend ---
+/backend/.venv/
+/backend/.env
+/backend/app/__pycache__/
+/media/
+
+# --- Archivos temporales y del sistema (opcional, recomendado) ---
+*.log
+*.tmp
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+Thumbs.db
