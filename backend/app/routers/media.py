@@ -5,6 +5,7 @@ import mimetypes
 from pathlib import Path
 from datetime import datetime, timedelta
 from starlette.responses import StreamingResponse
+from typing import Optional, List
 
 try:
     import magic 
@@ -12,7 +13,7 @@ try:
 except Exception:
     HAS_MAGIC = False
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request, Response, status, Query
 from sqlalchemy.orm import Session
 
 from ..auth import require_user, require_roles, get_db
@@ -53,6 +54,69 @@ def media_abs_path(rel_path: str) -> Path:
     return Path(settings.media_root).resolve() / rel_path
 
 # === Endpoints ===
+
+@router.get("", response_model=dict)
+def list_media(
+    q: Optional[str] = Query(None, description="Buscar por nombre (rel_path)"),
+    owner_id: Optional[int] = Query(None, description="Filtrar por dueño (solo admin)"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    ctx=Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Lista de medios con paginación.
+    - Usuarios normales: sólo sus archivos.
+    - Admin: puede ver todos o filtrar por owner_id.
+    """
+    user, _, _ = ctx
+    is_admin = any(r.name == "admin" for r in user.roles)
+
+    query = db.query(MediaFile)
+
+    # permisos
+    if not is_admin:
+        query = query.filter(MediaFile.owner_id == user.id)
+    else:
+        if owner_id is not None:
+            query = query.filter(MediaFile.owner_id == owner_id)
+
+    # búsqueda simple por ruta/nombre
+    if q:
+        like = f"%{q}%"
+        query = query.filter(MediaFile.rel_path.ilike(like))
+
+    # total para paginación
+    total = query.count()
+
+    # orden y paginado
+    query = query.order_by(MediaFile.created_at.desc()) \
+                 .offset((page - 1) * page_size) \
+                 .limit(page_size)
+
+    rows = query.all()
+
+    items: List[MediaOut] = [
+        MediaOut(
+            id=m.id,
+            owner_id=m.owner_id,
+            rel_path=m.rel_path,
+            mime=m.mime,
+            size_bytes=m.size_bytes,
+            sha256=m.sha256,
+            node_home=m.node_home,
+            created_at=m.created_at,
+        )
+        for m in rows
+    ]
+
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": (total + page_size - 1) // page_size if total else 0,
+    }
 
 @router.post("/upload", response_model=MediaOut, status_code=201)
 async def upload_media(

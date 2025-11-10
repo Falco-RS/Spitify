@@ -44,6 +44,17 @@ def setup_styles(root: tk.Tk):
     style.map("TEntry", fieldbackground=[("focus", COL_PANEL2)])
     style.configure("Separator", background=COL_BORDER)
 
+    # Mejorar contraste del texto dentro de tablas/cuadros (Treeview)
+    style.configure("Treeview",
+                    background=COL_PANEL,
+                    fieldbackground=COL_PANEL,
+                    foreground="#C8C8C8")  # <- un poco más oscuro que #E6E6E6
+
+    style.configure("Treeview.Heading",
+                    background=COL_PANEL2,
+                    foreground="#EDEDED",
+                    font=("Segoe UI", 10, "bold"))
+
     return style
 
 # Re-export para que Frontend.py pueda importar desde UI.theme

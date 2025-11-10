@@ -34,6 +34,8 @@ def build_player_tab(app, notebook):
     ttk.Button(row, text=" Subir", image=app.icons.get("upload"), compound="left",
                command=app.on_upload_current).pack(side="left", padx=6)
 
+    ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=(10, 8))
+
     # stream por id
     api_row = ttk.Frame(inner); api_row.pack(fill="x", pady=(10, 0))
     ttk.Label(api_row, text="Media ID:", width=12).pack(side="left")
@@ -41,10 +43,13 @@ def build_player_tab(app, notebook):
     app.media_id_entry.pack(side="left")
     ttk.Button(api_row, text=" Descargar & Reproducir (API)",
                command=app.on_stream_download_play).pack(side="left", padx=8)
-
+    ttk.Button(api_row, text=" Ver medios ",
+           command=app.on_show_media_browser).pack(side="left")
     app.pb_stream = ttk.Progressbar(inner, mode="determinate", length=280)
     app.pb_stream.pack(anchor="w", pady=(6, 0))
     app.pb_stream["value"] = 0
+
+    ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=(10, 8))
 
     # share
     share_row = ttk.Frame(inner); share_row.pack(fill="x", pady=(10, 0))

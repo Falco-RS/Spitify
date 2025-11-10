@@ -109,23 +109,19 @@ class SpitifyApp:
         ttk.Label(frm, text="Completa los campos para crear tu cuenta.", style="Muted.TLabel")\
             .grid(row=1, column=0, columnspan=2, sticky="w", pady=(0,10))
 
-        ttk.Label(frm, text="Usuario:").grid(row=2, column=0, sticky="e", padx=(0,8), pady=4)
-        username_e = ttk.Entry(frm, width=30); username_e.grid(row=2, column=1, sticky="w")
-
         ttk.Label(frm, text="Email:").grid(row=3, column=0, sticky="e", padx=(0,8), pady=4)
         email_e = ttk.Entry(frm, width=30); email_e.grid(row=3, column=1, sticky="w")
 
         ttk.Label(frm, text="Contraseña:").grid(row=4, column=0, sticky="e", padx=(0,8), pady=4)
         pass_e = ttk.Entry(frm, width=30, show="•"); pass_e.grid(row=4, column=1, sticky="w")
 
-        ttk.Label(frm, text="Rol:").grid(row=5, column=0, sticky="e", padx=(0,8), pady=4)
-        role_cb = ttk.Combobox(frm, values=["user","admin"], state="readonly", width=12)
-        role_cb.set("user"); role_cb.grid(row=5, column=1, sticky="w")
-
-        btn_row = ttk.Frame(frm); btn_row.grid(row=6, column=0, columnspan=2, sticky="w", pady=(12,0))
-        ttk.Button(btn_row, text="Registrar", style="Accent.TButton",
-                   command=lambda: self._do_register(dlg, username_e.get().strip(), email_e.get().strip(), pass_e.get(), role_cb.get())
-                   ).pack(side="left")
+        # Rol fijo 
+        role = "user"
+        btn_row = ttk.Frame(frm); btn_row.grid(row=5, column=0, columnspan=2, sticky="w", pady=(12,0))
+        ttk.Button(
+            btn_row, text="Registrar", style="Accent.TButton",
+            command=lambda: self._do_register(dlg, email_e.get().strip(), pass_e.get(), role)
+        ).pack(side="left")
         ttk.Button(btn_row, text="Cancelar", command=dlg.destroy).pack(side="left", padx=8)
 
         # centrado simple
@@ -136,7 +132,7 @@ class SpitifyApp:
         dlg.geometry(f"+{x}+{y}")
 
     def _do_register(self, dlg, username: str, email: str, password: str, role: str):
-        if not username or not email or not password:
+        if not email or not password:
             messagebox.showwarning("Registro", "Completa usuario, email y contraseña.")
             return
 
@@ -144,7 +140,7 @@ class SpitifyApp:
 
         def worker():
             try:
-                created = self.api.register(username=username, email=email, password=password, role=role)
+                created = self.api.register(email=email, password=password, role=role)
                 # Opcional: auto-login tras registrar
                 self.api.login(email, password)
                 me = self.api.get_me()
@@ -337,6 +333,7 @@ class SpitifyApp:
         self.status.set("Descargando por token…")
         self.pb_stream["mode"] = "indeterminate"; self.pb_stream.start(12)
 
+
         def worker():
             try:
                 import requests
@@ -372,6 +369,63 @@ class SpitifyApp:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def on_show_media_browser(self, page: int = 1, page_size: int = 20):
+            if not self.auth_token:
+                messagebox.showwarning("Sesión", "Inicia sesión para ver tus medios.")
+                return
+            try:
+                data = self.api.list_media(page=page, page_size=page_size)
+            except Exception as e:
+                messagebox.showerror("Medios", f"Error al consultar /media:\n{e}")
+                return
+
+            items = data.get("items", [])
+            win = tk.Toplevel(self.root)
+            win.title(f"Medios (página {data.get('page', page)}/{data.get('pages', 1)})")
+            win.geometry("900x420")
+            win.transient(self.root)
+
+            frm = ttk.Frame(win); frm.pack(fill="both", expand=True, padx=10, pady=10)
+
+            cols = ("id", "rel_path", "mime", "size_bytes", "node_home", "created_at")
+            tv = ttk.Treeview(frm, columns=cols, show="headings", height=12)
+            for c, w in zip(cols, (60, 420, 140, 110, 120, 180)):
+                tv.heading(c, text=c.upper())
+                tv.column(c, width=w, anchor="w")
+            tv.pack(fill="both", expand=True)
+
+            # Volcar filas
+            for m in items:
+                tv.insert("", "end", values=(
+                    m.get("id", ""),
+                    str(m.get("rel_path", "")).replace("\\", "/"),
+                    m.get("mime", ""),
+                    m.get("size_bytes", 0),
+                    m.get("node_home", ""),
+                    m.get("created_at", ""),
+                ))
+
+            # Pie con totales
+            meta = ttk.Label(frm, text=f"Total: {data.get('total', len(items))}  •  "
+                                    f"page={data.get('page', page)}  size={data.get('page_size', page_size)}",
+                            style="Muted.TLabel")
+            meta.pack(anchor="w", pady=(6, 0))
+
+            # (Opcional) doble click para copiar el ID al Media ID de la pantalla principal
+            def _on_dclick(_event=None):
+                sel = tv.selection()
+                if not sel:
+                    return
+                vals = tv.item(sel[0], "values")
+                if not vals:
+                    return
+                media_id = vals[0]
+                try:
+                    self.media_id_entry.delete(0, "end")
+                    self.media_id_entry.insert(0, str(media_id))
+                except Exception:
+                    pass
+            tv.bind("<Double-1>", _on_dclick)
 
     def on_download_share(self):
         token = (self.share_token_entry.get() or "").strip()

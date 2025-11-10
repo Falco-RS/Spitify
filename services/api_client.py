@@ -93,7 +93,6 @@ class ApiClient:
         """
         url = f"{self.base_url}/auth/register"
         payload = {
-            "username": username,
             "email": email,
             "password": password,
             "role": role,
@@ -148,6 +147,22 @@ class ApiClient:
             raise RuntimeError(f"Upload failed: {resp.status_code} {detail}")
 
         return resp.json()
+    
+    def list_media(self, page: int = 1, page_size: int = 20):
+        """GET /media (requiere Authorization). Devuelve el JSON paginado."""
+        self._ensure_token()
+        url = f"{self.base_url}/media"
+        params = {"page": page, "page_size": page_size}
+        r = requests.get(url, headers=self._auth_header(), params=params, timeout=self.timeout)
+        if r.status_code != 200:
+            try:
+                detail = r.json().get("detail", r.text)
+            except Exception:
+                detail = r.text
+            raise RuntimeError(f"/media failed: {r.status_code} {detail}")
+        return r.json()
+
+
     
     # ---- STREAM: descarga parcial (bytes start-end, ambos inclusivos) ----
     def stream_range(self, media_id: int, start: int = 0, end: Optional[int] = None) -> Tuple[bytes, Dict[str, str], int]:

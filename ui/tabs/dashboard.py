@@ -4,6 +4,7 @@ from ..theme import FONT_H2, PAD
 
 REFRESH_SECS = 3      # auto-refresh
 _COOLDOWN_MS = 15000  # si el summary no existe, pausamos 15s solo ese bloque
+SHOW_SUMMARY = False
 
 def _mk_tree(parent, cols, widths):
     tv = ttk.Treeview(parent, columns=cols, show="headings", height=8)
@@ -19,11 +20,15 @@ def build_dashboard_tab(app, notebook):
     wrap = ttk.Frame(tab); wrap.pack(fill="both", expand=True, padx=PAD, pady=PAD)
 
     # --- Resumen ---
-    card_sum = ttk.Frame(wrap, style="Card.TFrame"); card_sum.pack(fill="x")
-    inner_sum = ttk.Frame(card_sum); inner_sum.pack(fill="x", padx=PAD, pady=PAD)
-    ttk.Label(inner_sum, text="Resumen global", font=FONT_H2).pack(anchor="w")
-    app.lbl_summary = ttk.Label(inner_sum, text="—", style="Muted.TLabel")
-    app.lbl_summary.pack(anchor="w", pady=(4,0))
+    if SHOW_SUMMARY:
+        card_sum = ttk.Frame(wrap, style="Card.TFrame"); card_sum.pack(fill="x")
+        inner_sum = ttk.Frame(card_sum); inner_sum.pack(fill="x", padx=PAD, pady=PAD)
+        ttk.Label(inner_sum, text="Resumen global", font=FONT_H2).pack(anchor="w")
+        app.lbl_summary = ttk.Label(inner_sum, text="—", style="Muted.TLabel")
+        app.lbl_summary.pack(anchor="w", pady=(4,0))
+    else:
+        # Para que el resto del código no falle por atributo inexistente
+        app.lbl_summary = None
 
     # --- Nodos ---
     card_nodes = ttk.Frame(wrap, style="Card.TFrame"); card_nodes.pack(fill="x", pady=(8,0))
@@ -70,24 +75,25 @@ def build_dashboard_tab(app, notebook):
 
 def _safe_refresh(app):
     if not app.auth_token:
-        app.lbl_summary.config(text="No autenticado.")
+        if app.lbl_summary is not None:
+            app.lbl_summary.config(text="No autenticado.")
         return
+
     try:
-        _refresh_summary(app)
+        if app.lbl_summary is not None:  # <-- solo si existe el widget
+            _refresh_summary(app)
     except Exception as e:
-        app.lbl_summary.config(text=f"Resumen: {e}")
-    try:
-        _refresh_nodes(app)
-    except Exception:
-        pass
-    try:
-        _refresh_jobs(app)
-    except Exception:
-        pass
-    try:
-        _refresh_sessions(app)
-    except Exception:
-        pass
+        if app.lbl_summary is not None:
+            app.lbl_summary.config(text=f"Resumen: {e}")
+
+    # el resto queda igual
+    try: _refresh_nodes(app)
+    except Exception: pass
+    try: _refresh_jobs(app)
+    except Exception: pass
+    try: _refresh_sessions(app)
+    except Exception: pass
+
 
 def _refresh_summary(app):
     # cooldown si ya sabemos que no hay endpoint
@@ -167,20 +173,48 @@ def _refresh_jobs(app):
         )
 
 def _refresh_sessions(app):
+    from datetime import datetime
+
+    def _pick(items):
+        # Acepta: lista directa, {"items":[...]}, o {"recent":[...]}
+        if isinstance(items, list):
+            return items
+        if isinstance(items, dict):
+            if "items" in items and isinstance(items["items"], list):
+                return items["items"]
+            if "recent" in items and isinstance(items["recent"], list):
+                return items["recent"]
+        return []
+
+    def _norm(s: dict) -> tuple[str, str, str, str, str]:
+        # nombre de columnas esperadas por el Treeview
+        sid = s.get("session_id") or s.get("id") or s.get("sid") or "—"
+        usr = s.get("user") or s.get("user_email") or s.get("email") or s.get("username") or "—"
+
+        # estado: intenta derivarlo si tu API expone is_active / expires_at
+        state = s.get("state")
+        if not state:
+            if s.get("is_active") is True:
+                state = "active"
+            elif s.get("expires_at"):
+                try:
+                    exp = datetime.fromisoformat(str(s["expires_at"]).replace("Z", "+00:00"))
+                    state = "expired" if exp < datetime.now(exp.tzinfo) else "active"
+                except Exception:
+                    state = "—"
+            else:
+                state = "—"
+
+        since = s.get("since") or s.get("created_at") or s.get("created") or "—"
+        last  = s.get("last_event") or s.get("expires_at") or s.get("updated_at") or "—"
+        return str(sid), str(usr), str(state), str(since), str(last)
+
     app.tv_sessions.delete(*app.tv_sessions.get_children())
     payload = app.api.monitor_sessions()
     if isinstance(payload, dict) and payload.get("_unavailable"):
         app.tv_sessions.insert("", "end", values=("—","—","—","—","—"))
         return
-    items = payload if isinstance(payload, list) else payload.get("items", [])
-    for s in items:
-        app.tv_sessions.insert(
-            "", "end",
-            values=(
-                s.get("session_id","—"),
-                s.get("user","—"),
-                s.get("state","—"),
-                s.get("since","—"),
-                s.get("last_event","—"),
-            )
-        )
+
+    for s in _pick(payload):
+        app.tv_sessions.insert("", "end", values=_norm(s))
+
